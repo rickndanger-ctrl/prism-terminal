@@ -1,0 +1,10 @@
+.DS_Store
+xcuserdata/
+*.xcframework/
+CameraAccess/Secrets.swift
+CameraAccess/FastVLM/models/
+build/
+DerivedData/
+*.xcresult/
+prism-dictation-fixture.wav
+prism-dictation-*-probe.json

@@ -1,0 +1,44 @@
+{
+  "name": "codex-lens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=26 <27"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/prepare-build.mjs",
+    "demo": "node --import tsx src/demo/text-vertical-slice.ts",
+    "messages:readiness": "npm run build && node dist/packages/gateway/src/messages/readinessCli.js",
+    "worker:diagnose": "npm run build && node scripts/diagnose-worker.mjs",
+    "gmail:build-keychain": "mkdir -p dist/native && swiftc -warnings-as-errors native/GmailKeychain.swift -o dist/native/gmail-keychain",
+    "gmail:check-keychain-input": "npm run gmail:build-keychain && node scripts/check-gmail-keychain-input.mjs",
+    "gmail:check-keychain-storage": "mkdir -p dist/native && swiftc -warnings-as-errors -D GMAIL_KEYCHAIN_TEST_SLOT native/GmailKeychain.swift -o dist/native/gmail-keychain-test && node scripts/check-gmail-keychain-storage.mjs",
+    "worker:probe": "npm run build && node scripts/probe-worker-computer.mjs",
+    "worker:typing": "npm run build && node scripts/probe-worker-typing.mjs",
+    "slice": "npm run slice -w @codex-lens/gateway --",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --exclude scripts/gemini-probe-usage.test.mjs",
+    "test:scripts": "node --test scripts/gemini-probe-usage.test.mjs",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run test:scripts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.1",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
+    "tsx": "^4.23.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
+  }
+}

@@ -1,0 +1,13 @@
+This repository combines original Prism/Codex Lens code with third-party source.
+No single license is asserted for the entire repository.
+
+For source bearing Meta Platforms notices, the inherited LICENSE states:
+
+DEVELOPER TERMS
+
+By using the Wearables Device Access Toolkit, you agree to our Meta Wearables Developer Terms (https://wearables.developer.meta.com/terms),
+including our Acceptable Use Policy (https://wearables.developer.meta.com/acceptable-use-policy).
+
+See THIRD_PARTY_NOTICES.md and third_party/ for verbatim upstream notices and
+component provenance. Dependency licenses and SDK terms remain applicable.
+No new blanket permission to redistribute third-party SDK binaries is granted.

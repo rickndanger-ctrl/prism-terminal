@@ -1,0 +1,6 @@
+# Versions exercised by the isolated bridge and its synthetic Google probe.
+aiortc==1.15.0
+av==17.1.0
+numpy==2.4.3
+websockets==17.1
+webrtcvad-wheels==2.0.14

@@ -1,0 +1,66 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+output/
+work/
+.build/
+.swiftpm/
+DerivedData/
+build/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local account configuration and credentials
+.env
+.env.*
+!.env.example
+!**/.env.example
+Secrets.swift
+Secrets.kt
+local.properties
+*.pem
+*.p12
+*.p8
+*.key
+*.mobileprovision
+auth.json
+credentials.json
+client_secret*.json
+token.json
+tokens.json
+
+# Private runtime data, recordings, and signed device artifacts
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.log
+*.ipa
+*.xcarchive/
+*.app/
+*.wav
+*.pcm
+*.m4a
+*.mp4
+*.mov
+# Upstream camera-decoder test fixture only; personal recordings stay excluded.
+!samples/CameraAccess/CameraAccessTests/Assets/plant.mp4
+*.xcresult/
+graphify-out/
+
+# Xcode per-user state
+xcuserdata/
+*.xcuserstate
+
+# Optional local voice weights are downloaded separately
+local-voice/models/
+local-voice/.cache/
+*.safetensors
+*.onnx
+*.pt
+*.pth
