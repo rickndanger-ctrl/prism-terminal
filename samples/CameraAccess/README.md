@@ -1,6 +1,6 @@
 # Prism Terminal iOS source
 
-This is the public-source configuration of the accepted build 24 application.
+This is the public-source configuration of the build 25 application. Reopening at the latest messages was verified on a physical phone; automatic recovery after a future real login change remains an acceptance check.
 It contains no developer account, signing profile, device identifier, gateway
 credential, or private `Secrets.swift`. The working app's dictation and command
 logic are retained; see the repository README for current feature limitations.

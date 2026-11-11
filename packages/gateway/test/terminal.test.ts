@@ -9,7 +9,7 @@ import { GATEWAY_TOKEN_ENV } from '../src/auth/index.js';
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.unstubAllEnvs(); });
 
-function fixture(options: { resumeError?: string; resumeErrorCode?: number; startError?: string;
+function fixture(options: { credentialVersion?: () => string; authError?: string; resumeError?: string; resumeErrorCode?: number; startError?: string;
   beforeTurnResponse?: (emit: (method: string, params: Record<string, unknown>) => void, threadId: string, turnId: string) => void } = {}) {
   const db = openDb(':memory:');
   const listeners = new Set<(message: AppServerMessage) => void>();
@@ -23,7 +23,7 @@ function fixture(options: { resumeError?: string; resumeErrorCode?: number; star
       messages.push(message);
       if (!('id' in message)) return;
       const failure = message.method === 'thread/resume' ? options.resumeError
-        : message.method === 'thread/start' ? options.startError : undefined;
+        : message.method === 'thread/start' ? options.startError : message.method === 'account/read' ? options.authError : undefined;
       if (failure !== undefined) {
         for (const listener of listeners) listener({
           id: message.id, error: {
@@ -49,7 +49,7 @@ function fixture(options: { resumeError?: string; resumeErrorCode?: number; star
     close: vi.fn(async () => {}),
     async *[Symbol.asyncIterator]() { /* listeners own this stream */ },
   };
-  const service = new TerminalService({ db, runtimeFactory: () => ({ codexHome: '/test', env: {}, cleanup() {} }), transportFactory: () => transport });
+  const service = new TerminalService({ db, credentialVersion: options.credentialVersion ?? (() => 'test-login'), runtimeFactory: () => ({ codexHome: '/test', env: {}, cleanup() {} }), transportFactory: () => transport });
   service.activate();
   cleanup.push(async () => { await service.close(); db.close(); });
   return { db, service, transport, messages, emit };
@@ -71,6 +71,69 @@ describe('persistent Prism Terminal', () => {
     vi.stubEnv('CODEX_LENS_TERMINAL_MODEL', ' ');
     const f = fixture();
     expect((await f.service.connect(randomUUID())).model).toBe('gpt-5.6-sol');
+  });
+  it('refreshes changed credentials before dispatch and preserves the thread and exactly-once receipt', async () => {
+    let version = 'first';
+    const f = fixture({ credentialVersion: () => version }), id = randomUUID(), requestId = randomUUID();
+    const original = await f.service.connect(id);
+    version = 'second';
+    await f.service.send(id, requestId, 'One command');
+    expect(f.transport.close).toHaveBeenCalledTimes(1);
+    expect(f.service.get(id).threadId).toBe(original.threadId);
+    expect(f.messages.filter(m => m.method === 'account/read')).toHaveLength(2);
+    await f.service.send(id, requestId, 'One command');
+    expect(f.messages.filter(m => m.method === 'turn/start')).toHaveLength(1);
+  });
+  it('never recycles a busy worker or retries an accepted command after credential changes', async () => {
+    let version = 'first';
+    const f = fixture({ credentialVersion: () => version }), id = randomUUID();
+    await f.service.connect(id); await f.service.send(id, randomUUID(), 'Work');
+    version = 'second';
+    await expect(f.service.send(id, randomUUID(), 'More')).rejects.toThrow('working');
+    expect(f.transport.close).not.toHaveBeenCalled();
+    expect(f.messages.filter(m => m.method === 'turn/start')).toHaveLength(1);
+  });
+  it('recovers after a completed authentication failure without replaying its command', async () => {
+    const f = fixture(), id = randomUUID();
+    await f.service.connect(id); await f.service.send(id, randomUUID(), 'Work');
+    f.emit('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'failed', error: { message: 'Your access token could not be refreshed because you have since logged out.' } } });
+    await vi.waitFor(() => expect(f.messages.filter(m => m.method === 'account/read')).toHaveLength(2));
+    await vi.waitFor(() => expect(f.service.get(id).state).toBe('ready'));
+    expect(f.messages.filter(m => m.method === 'turn/start')).toHaveLength(1);
+  });
+  it('automatically picks up a new login while idle', async () => {
+    vi.useFakeTimers();
+    try {
+      let version = 'first';
+      const f = fixture({ credentialVersion: () => version }), id = randomUUID();
+      await f.service.connect(id); version = 'second';
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(f.transport.close).toHaveBeenCalledTimes(1);
+      expect(f.service.get(id).state).toBe('ready');
+      expect(f.messages.filter(m => m.method === 'turn/start')).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it('rejects an unusable login rather than reporting ready', async () => {
+    const f = fixture({ authError: 'Your access token could not be refreshed.' });
+    await expect(f.service.connect(randomUUID())).rejects.toThrow('access token');
+    expect(f.messages.filter(m => m.method === 'turn/start')).toHaveLength(0);
+  });
+  it('materializes recent history once, with a replay cursor and no cross-session messages', async () => {
+    const f = fixture(), id = randomUUID(), other = randomUUID();
+    await f.service.connect(id); await f.service.connect(other);
+    for (let i = 0; i < 305; i++) {
+      f.service.store.append(id, { kind: 'assistant', itemId: 'item-' + i, text: 'partial', operation: 'append' });
+      f.service.store.append(id, { kind: 'assistant', itemId: 'item-' + i, text: 'answer-' + i, operation: 'replace' });
+    }
+    f.service.store.append(other, { kind: 'input', itemId: 'private', text: 'Other session' });
+    const snapshot = f.service.store.snapshot(id);
+    expect(snapshot.entries).toHaveLength(100);
+    expect(snapshot.entries[0]?.text).toBe('answer-205');
+    expect(snapshot.entries.at(-1)?.text).toBe('answer-304');
+    expect(snapshot.hasEarlier).toBe(true);
+    expect(f.service.store.events(id, snapshot.cursor)).toEqual([]);
+    expect(f.service.store.events(id, 0).length).toBeGreaterThan(100);
+    expect(snapshot.entries.some(e => e.id === 'private')).toBe(false);
   });
   it('binds a final reply to its request, excludes commentary, and durably replays it exactly once', async () => {
     const f = fixture(), id = randomUUID(), requestId = randomUUID();

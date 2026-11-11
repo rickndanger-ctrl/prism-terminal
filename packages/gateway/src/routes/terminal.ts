@@ -30,6 +30,11 @@ export function registerTerminalRoutes(server: FastifyInstance, service: Termina
     return service.connect(body.sessionId, body.acknowledgeUnknownOutcome);
   }));
   server.get('/v1/terminal/:sessionId', async (request) => guarded(async () => service.get(Session.parse(request.params).sessionId)));
+  server.get('/v1/terminal/:sessionId/snapshot', async (request) => guarded(async () => {
+    const id = Session.parse(request.params).sessionId;
+    service.get(id);
+    return service.store.snapshot(id);
+  }));
   server.post('/v1/terminal/:sessionId/turns', { bodyLimit: 700_000 }, async (request) => guarded(async () => {
     const id = Session.parse(request.params).sessionId;
     const body = Send.parse(request.body);

@@ -65,6 +65,30 @@ export class TerminalStore {
     return (this.db.prepare('SELECT sequence,body FROM terminal_events WHERE sessionId = ? AND sequence > ? ORDER BY sequence LIMIT 250').all(id, after) as { sequence: number; body: string }[])
       .map((row) => ({ ...JSON.parse(row.body) as NewTerminalEvent, sequence: row.sequence }));
   }
+  /** Materialize one session once, rather than replaying every token to the phone. */
+  snapshot(id: string, limit = 100) {
+    const session = this.get(id);
+    if (!session) throw new Error('Terminal session not found');
+    const entries = new Map<string, { id: string; kind: string; text: string; title: string; status: string; imageCount: number }>();
+    let cursor = 0;
+    for (;;) {
+      const events = this.events(id, cursor);
+      for (const event of events) {
+        cursor = event.sequence;
+        if (!['input', 'assistant', 'tool', 'notice'].includes(event.kind)) continue;
+        const entry = entries.get(event.itemId) ?? { id: event.itemId, kind: event.kind, text: '', title: '', status: '', imageCount: 0 };
+        if (event.text !== undefined) entry.text = (event.operation === 'append' ? entry.text + event.text : event.text).slice(0, 64_000);
+        if (event.title !== undefined) entry.title = event.title;
+        if (event.status !== undefined) entry.status = event.status;
+        if (event.imageCount !== undefined) entry.imageCount = event.imageCount;
+        entries.set(event.itemId, entry);
+      }
+      if (events.length < 250) break;
+    }
+    const all = [...entries.values()];
+    const acceptedRequestIds = (this.db.prepare('SELECT id FROM terminal_requests WHERE sessionId = ? ORDER BY rowid DESC LIMIT 100').all(id) as {id: string}[]).map((row) => row.id);
+    return { entries: all.slice(-limit), cursor, state: session.state, hasEarlier: all.length > limit, acceptedRequestIds };
+  }
   request(id: string): { sessionId: string; digest: string } | undefined {
     return this.db.prepare('SELECT sessionId,digest FROM terminal_requests WHERE id = ?').get(id) as { sessionId: string; digest: string } | undefined;
   }

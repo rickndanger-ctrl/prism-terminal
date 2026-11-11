@@ -1,6 +1,6 @@
 # Real-world beta testing
 
-This public snapshot is based on Prism Terminal build 24. It replaces the earlier Codex Lens iPhone implementation as the current application in this repository. Existing GitHub history is preserved; private rollback artifacts and local-only development history are not included. This is not a claim that every historical integration is complete.
+This public snapshot includes Prism Terminal build 25 on the build 24 baseline. See [build 25 notes](BUILD25.md) for connection recovery and physically confirmed history restoration. It replaces the earlier Codex Lens iPhone implementation as the current application in this repository. Existing GitHub history is preserved; private rollback artifacts and local-only development history are not included. This is not a claim that every historical integration is complete.
 
 ## Evidence at publication
 

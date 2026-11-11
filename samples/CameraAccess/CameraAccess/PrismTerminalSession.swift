@@ -56,6 +56,8 @@ final class PrismTerminalSession: ObservableObject {
     @Published var notice = ""
     @Published private(set) var connectionNotice = ""
     @Published private(set) var revision = 0
+    @Published private(set) var restoringHistory = false
+    @Published private(set) var hasEarlierHistory = false
     private var selectedID = ""
     private var activeGateway = ""
     private var generation = UUID()
@@ -328,6 +330,26 @@ final class PrismTerminalSession: ObservableObject {
             var delay = 1
             while !Task.isCancelled && generation == self.generation {
                 do {
+                    if transcript.cursor == 0 {
+                        struct Snapshot: Decodable {
+                            let entries: [TerminalEntry]
+                            let cursor: Int
+                            let state: String
+                            let hasEarlier: Bool
+                            let acceptedRequestIds: [String]
+                        }
+                        restoringHistory = true
+                        defer { restoringHistory = false }
+                        let snapshot = try await call("/v1/terminal/\(id)/snapshot", as: Snapshot.self)
+                        guard !Task.isCancelled, generation == self.generation else { return }
+                        transcript = TerminalTranscript(entries: snapshot.entries, cursor: snapshot.cursor, state: snapshot.state)
+                        state = snapshot.state
+                        hasEarlierHistory = snapshot.hasEarlier
+                        // Recover acceptance without speaking old replies or replaying commands.
+                        if let pending = cache.pending, pending.sessionID == id,
+                           snapshot.acceptedRequestIds.contains(pending.requestID) { accept(pending) }
+                        revision += 1
+                    }
                     var request = try request("/v1/terminal/\(id)/events?after=\(transcript.cursor)")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     let (bytes, response) = try await network.bytes(for: request)

@@ -1,10 +1,12 @@
-# Prism
+# Prism Terminal
 
 ### Your Mac, one spoken command away.
 
-Prism is an iPhone and Meta Ray-Ban front end for Codex on your Mac. Dictate a request, review the text, and press **Send**. Everyday commands take a direct native path; bigger tasks go to a persistent Codex session.
+Prism Terminal is an iPhone and Meta Ray-Ban front end for Codex on your Mac. Dictate a request, review the text, and press **Send**. Everyday commands take a direct native path; bigger tasks go to a persistent Codex session.
 
-**Prism is the current application in the Codex Lens repository.** This is a developer beta in controlled real-world testing—not a finished, always-on consumer assistant. The reliable core is explicit dictation and Send. Background voice and continuous camera-aware interaction still need work.
+**Previously Codex Lens, now Prism Terminal.** This is a developer beta in controlled real-world testing—not a finished, always-on consumer assistant. The reliable core is explicit dictation and Send. Background voice and continuous camera-aware interaction still need work.
+
+Build 25 adds idle-worker recovery after a Mac login change and opens directly at recent messages instead of replaying the entire conversation on screen. Recovery never automatically repeats a failed command. See [build 25 notes](docs/BUILD25.md).
 
 <img src="samples/CameraAccess/CameraAccess/Assets.xcassets/AppIcon.appiconset/prism-terminal-v1.png" alt="Prism terminal icon" width="120">
 
@@ -45,8 +47,8 @@ The phone connects to your Mac gateway over private HTTPS. The Mac must remain a
 You need macOS, **Node.js 26**, a working authenticated Codex installation, and Xcode for building the phone app. Codex account limits apply. Native controls need appropriate Accessibility/Automation permissions; more general computer use requires compatible Codex computer/browser tooling. Those tools and Codex itself are not bundled here.
 
 ```sh
-git clone https://github.com/rickndanger-ctrl/codex-lens.git
-cd codex-lens
+git clone https://github.com/rickndanger-ctrl/prism-terminal.git
+cd prism-terminal
 npm ci
 npm run build
 ```

@@ -10,7 +10,7 @@ public struct TerminalEvent: Codable, Sendable {
     public var title: String?
     public var imageCount: Int?
 }
-public struct TerminalEntry: Identifiable, Equatable, Sendable {
+public struct TerminalEntry: Codable, Identifiable, Equatable, Sendable {
     public var id: String
     public var kind: String
     public var text: String
@@ -23,6 +23,11 @@ public struct TerminalTranscript: Sendable {
     public private(set) var cursor = 0
     public private(set) var state = "disconnected"
     public init() {}
+    public init(entries: [TerminalEntry], cursor: Int, state: String) {
+        self.entries = entries
+        self.cursor = max(0, cursor)
+        self.state = state
+    }
     /// Cursor replay may repeat events. Completed text replaces its streamed draft.
     public mutating func apply(_ event: TerminalEvent) {
         guard event.sequence > cursor else { return }

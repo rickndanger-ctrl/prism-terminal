@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Db } from '../db/schema.js';
@@ -34,6 +35,7 @@ export class TerminalError extends Error {
   constructor(readonly statusCode: number, message: string) { super(message); }
 }
 export interface TerminalOptions {
+  credentialVersion?: () => string;
   externalBusy?: () => boolean;
   db: Db;
   runtimeFactory?: () => IsolatedCodexRuntime;
@@ -65,6 +67,39 @@ export class TerminalService {
   private loaded = new Set<string>();
   private listeners = new Set<(id: string) => void>();
   private outputBytes = 0;
+  private credentialVersion?: string;
+  private lastRecoveryVersion?: string;
+  private authenticationFailed = false;
+  private credentialWatch?: ReturnType<typeof setInterval>;
+  private currentCredentialVersion(): string {
+    if (this.options.credentialVersion) return this.options.credentialVersion();
+    try {
+      const stat = statSync(join(homedir(), '.codex', 'auth.json'));
+      return `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    } catch { return 'missing'; }
+  }
+  private needsCredentialRefresh(): boolean {
+    return this.authenticationFailed || (this.credentialVersion !== undefined && this.credentialVersion !== this.currentCredentialVersion());
+  }
+  private idle(): boolean {
+    return !this.connecting && !this.booting && !this.closing && !this.store.busy()
+      && !this.options.externalBusy?.()
+      && !this.options.db.prepare("SELECT 1 FROM assistant_tasks WHERE state = 'running' LIMIT 1").get();
+  }
+  private async recoverAuthentication(id: string): Promise<void> {
+    if (!this.idle()) return;
+    this.lastRecoveryVersion = this.currentCredentialVersion();
+    try { await this.connect(id); }
+    catch (error) {
+      this.state(id, 'disconnected');
+      this.emit(id, { kind: 'notice', itemId: randomUUID(), text: error instanceof Error && this.authenticationError(error.message)
+        ? 'Codex needs a fresh sign-in on your Mac. After signing in, Prism will reconnect automatically. No command was repeated.'
+        : 'The Mac connection could not recover yet. Try reconnecting. No command was repeated.' });
+    }
+  }
+  private authenticationError(message: string): boolean {
+    return /access token.*(?:refresh|expired)|refresh.token|logged out|sign(?:ed)? in.*another account|authentication.*(?:unavailable|expired)/iu.test(message);
+  }
   // turn/start notifications may arrive before its RPC result. Only that
   // result establishes which Codex turn belongs to the phone's request ID.
   private pendingNotifications = new Map<string, { messages: AppServerMessage[]; bytes: number }>();
@@ -78,6 +113,13 @@ export class TerminalService {
   activate(): void {
     if (this.activated) return;
     this.activated = true;
+    this.credentialWatch = setInterval(() => {
+      const version = this.currentCredentialVersion();
+      if (!this.idle() || version === this.lastRecoveryVersion || !this.needsCredentialRefresh()) return;
+      const session = this.store.list().find((value) => ['ready', 'disconnected'].includes(value.state));
+      if (session) void this.recoverAuthentication(session.id);
+    }, 15_000);
+    this.credentialWatch.unref();
     for (const session of this.store.list()) {
       this.store.abandonTurn(session.id);
       const interrupted = ['running', 'stopping', 'uncertain'].includes(session.state);
@@ -102,6 +144,19 @@ export class TerminalService {
   private async boot(): Promise<AppServerHandle> {
     if (!this.activated || this.closing) throw new TerminalError(503, 'The Mac terminal is not ready.');
     await this.recovery;
+    if (this.transport && this.needsCredentialRefresh()) {
+      if (this.store.busy() || this.options.externalBusy?.()
+          || this.options.db.prepare("SELECT 1 FROM assistant_tasks WHERE state = 'running' LIMIT 1").get()) {
+        throw new TerminalError(409, 'Codex is working. Its login will refresh after this command finishes.');
+      }
+      const old = this.transport;
+      this.transport = undefined;
+      await old.close();
+      this.runtime?.cleanup();
+      this.runtime = undefined;
+      this.loaded.clear();
+      this.store.setOwner();
+    }
     if (this.transport) return this.transport;
     if (this.booting) return this.booting;
     const previous = this.store.owner();
@@ -110,6 +165,8 @@ export class TerminalService {
     }
     this.store.setOwner();
     this.booting = (async () => {
+      const credentialVersion = this.currentCredentialVersion();
+      this.lastRecoveryVersion = credentialVersion;
       const runtime = this.options.runtimeFactory?.() ?? createIsolatedCodexRuntime({
         capabilitySet: 'mac',
         persistentDirectory: join(homedir(), 'Library', 'Application Support', 'CodexLens', 'prism-terminal'),
@@ -124,15 +181,22 @@ export class TerminalService {
       try {
         const initialized = await initialize(transport);
         if (!initialized.ok) throw new TerminalError(503, initialized.error.message);
+        // Do not force token rotation in a copied credential home. The main
+        // Codex login owns refresh persistence; reload its updated credentials.
+        const auth = await request(transport, 'account/read', { refreshToken: false }, 20_000);
+        if (!auth.ok) throw new TerminalError(503, auth.error.message);
         runtime.sealCredentials?.();
         const ready = await verifyMcpServers(transport, runtime.requiredMcpServers ?? []);
         if (!ready.ok) throw new TerminalError(503, ready.error.message);
         this.transport = transport;
+        this.credentialVersion = credentialVersion;
+        this.authenticationFailed = false;
         void transport.terminated?.then(() => {
           this.recovery = this.transportEnded(transport).finally(() => { this.recovery = undefined; });
         });
         return transport;
       } catch (error) {
+        if (error instanceof Error && this.authenticationError(error.message)) this.authenticationFailed = true;
         await transport.close();
         runtime.cleanup();
         this.runtime = undefined;
@@ -207,6 +271,12 @@ export class TerminalService {
       return this.get(id); // Reconnecting or a lost HTTP response never reruns a command.
     }
     const session = this.get(id);
+    if (this.needsCredentialRefresh() || (this.transport && session.state === 'ready' && session.threadId && !this.loaded.has(session.threadId))) {
+      if (this.store.busy()) throw new TerminalError(409, 'Codex is working. Wait before sending another command.');
+      await this.connect(id);
+      // Recheck the durable receipt and busy lease after the asynchronous reconnect.
+      return this.send(id, requestId, text, images);
+    }
     if (session.state !== 'ready' || !this.transport || !session.threadId) throw new TerminalError(409, 'Connect this session before sending.');
     if (this.options.externalBusy?.() || this.store.busy() || this.options.db.prepare("SELECT 1 FROM assistant_tasks WHERE state = 'running' LIMIT 1").get()) {
       throw new TerminalError(409, 'Codex is already working. Wait for it to finish or stop the current command.');
@@ -244,6 +314,10 @@ export class TerminalService {
           this.state(id, 'uncertain');
         }
         this.emit(id, { kind: 'notice', itemId: randomUUID(), text: response.error.message });
+        if (this.authenticationError(response.error.message)) {
+          this.authenticationFailed = true;
+          void this.recoverAuthentication(id);
+        }
       }
       throw new TerminalError(503, response.error.message);
     }
@@ -309,6 +383,10 @@ export class TerminalService {
       if (this.store.completeTurn(ownedTurn.requestId, status)) for (const listener of this.listeners) listener(id);
       if (turn.status !== 'completed') this.emit(id, { kind: 'notice', itemId: randomUUID(),
         text: turn.status === 'interrupted' ? 'Interrupted.' : string(record(turn.error).message) || 'The command did not complete.' });
+      if (status === 'failed' && this.authenticationError(string(record(turn.error).message))) {
+        this.authenticationFailed = true;
+        void this.recoverAuthentication(id);
+      }
     } else if (method === 'item/agentMessage/delta' || method === 'item/commandExecution/outputDelta') {
       const delta = string(params.delta, 16_000);
       this.outputBytes += Buffer.byteLength(delta);
@@ -345,6 +423,7 @@ export class TerminalService {
   async close(): Promise<void> {
     if (!this.activated) return;
     this.closing = true;
+    clearInterval(this.credentialWatch);
     await this.recovery;
     const transport = this.transport ?? await this.booting?.catch(() => undefined);
     await transport?.close();

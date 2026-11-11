@@ -380,6 +380,10 @@ struct PrismTerminalView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     welcome
+                    if terminal.hasEarlierHistory {
+                        Text("Showing the latest 100 items. Earlier history is preserved on your Mac.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     ForEach(terminal.transcript.entries) { entry in entryView(entry) }
                     if terminal.busy {
                         HStack(spacing: 9) {
@@ -400,6 +404,9 @@ struct PrismTerminalView: View {
                 }.padding(18)
             }
             .scrollDismissesKeyboard(.interactively)
+            .defaultScrollAnchor(.bottom)
+            .opacity(terminal.restoringHistory ? 0 : 1)
+            .overlay { if terminal.restoringHistory { ProgressView("Restoring conversation…") } }
             .simultaneousGesture(DragGesture().onChanged { _ in followOutput = false })
             .onChange(of: terminal.revision) { _, _ in
                 if followOutput { proxy.scrollTo("terminal-bottom", anchor: .bottom) }

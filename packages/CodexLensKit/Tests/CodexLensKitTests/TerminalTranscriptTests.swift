@@ -2,6 +2,18 @@ import XCTest
 @testable import CodexLensKit
 
 final class TerminalTranscriptTests: XCTestCase {
+    func testSnapshotRestoresWithoutReplayingOldDeltas() throws {
+        let entries = [TerminalEntry(id: "answer", kind: "assistant", text: "Saved answer", title: "", status: "completed", imageCount: 0)]
+        let data = try JSONEncoder().encode(entries)
+        let decoded = try JSONDecoder().decode([TerminalEntry].self, from: data)
+        var transcript = TerminalTranscript(entries: decoded, cursor: 100, state: "ready")
+        transcript.apply(.init(sequence: 99, kind: "assistant", itemId: "answer", text: "old delta", operation: "append"))
+        XCTAssertEqual(transcript.entries, entries)
+        XCTAssertEqual(transcript.state, "ready")
+        transcript.apply(.init(sequence: 101, kind: "input", itemId: "new", text: "Next question"))
+        XCTAssertEqual(transcript.entries.count, 2)
+        XCTAssertEqual(transcript.cursor, 101)
+    }
     func testReplayIsIdempotentAndFinalTextReplacesStream() throws {
         var transcript = TerminalTranscript()
         let delta = TerminalEvent(sequence: 1, kind: "assistant", itemId: "answer", text: "Hello", operation: "append", status: "running")
